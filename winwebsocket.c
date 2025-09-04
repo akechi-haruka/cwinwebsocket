@@ -14,13 +14,19 @@
 #define WEBSOCKET_VERSION "13"
 
 static DWORD __stdcall wws_proc(LPVOID ctx);
+
 static DWORD __stdcall wws_client_proc(LPVOID ctx);
+
 static void wss_handle_http_handshake(struct wws_connection* conn);
+
 static void wss_handle_ws_frame(struct wws_connection* conn);
 
 static void (*cb_onopen)(struct wws_connection*) = NULL;
+
 static void (*cb_onclose)(struct wws_connection*) = NULL;
+
 static void (*cb_onmessage)(struct wws_connection*, const char*, size_t) = NULL;
+
 static void (*cb_log)(const char*, ...) = NULL;
 
 static bool is_running = false;
@@ -67,7 +73,7 @@ HRESULT wws_start(int port) {
     bind_addr.sin_family = AF_INET;
     bind_addr.sin_port = htons(port);
     bind_addr.sin_addr.S_un.S_addr = INADDR_ANY;
-    ret = bind(server_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr));
+    ret = bind(server_socket, (struct sockaddr *) &bind_addr, sizeof(bind_addr));
     if (ret == SOCKET_ERROR) {
         log("bind failed with error: %ld\n", WSAGetLastError());
         WSACleanup();
@@ -91,11 +97,10 @@ HRESULT wws_start(int port) {
 }
 
 DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
-
     while (is_running) {
         struct sockaddr_in remote_addr = {0};
         int remote_addr_len = sizeof(remote_addr);
-        SOCKET client = accept(server_socket, (struct sockaddr*)&remote_addr, &remote_addr_len);
+        SOCKET client = accept(server_socket, (struct sockaddr *) &remote_addr, &remote_addr_len);
         if (client == INVALID_SOCKET) {
             int error = WSAGetLastError();
             if (error == WSAEINTR) {
@@ -133,7 +138,6 @@ DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
 }
 
 
-
 DWORD __stdcall wws_client_proc(LPVOID ctx) {
     struct wws_connection* conn = ctx;
 
@@ -149,10 +153,15 @@ DWORD __stdcall wws_client_proc(LPVOID ctx) {
     }
 
     log("Disconnecting %s:%d\n", conn->ip_str, conn->port);
-    WSAEVENT ev = WSACreateEvent();
-    WSAEventSelect(conn->conn_handle, &ev, FD_CLOSE);
-    shutdown(conn->conn_handle, SD_BOTH);
-    WSAWaitForMultipleEvents(1, &ev, FALSE, INFINITE, FALSE);
+    shutdown(conn->conn_handle, SD_SEND);
+
+    char dummy[32];
+    int recvd = 0;
+    do {
+        // is this really how you're supposed to do this?
+        recvd = recv(conn->conn_handle, dummy, sizeof(dummy), 0);
+    } while (recvd > 0);
+
     closesocket(conn->conn_handle);
     log("Disconnected %s:%d\n", conn->ip_str, conn->port);
     InterlockedDecrement(&connection_counter);
@@ -177,18 +186,20 @@ void wss_send(struct wws_connection* conn, const char* data, int len) {
     } while (pos < len);
 }
 
-void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, const char* http_message, const char* extra_headers) {
+void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, const char* http_message,
+                            const char* extra_headers) {
     if (!conn->is_connected) {
         return;
     }
 
     char output[2048];
-    snprintf(output, 2048, "HTTP/1.1 %d %s\r\nConnection: close\r\n%s\r\n\r\n", http_code, http_message, extra_headers);
+    snprintf(output, 2048, "HTTP/1.1 %d %s\r\n%s\r\n\r\n", http_code, http_message,
+             extra_headers != NULL ? extra_headers : "Connection: close");
 
     log("HTTP Response: %d %s\n", http_code, http_message);
     logv("Response content:\n%s", output);
 
-    wss_send(conn, output, (int)strlen(output) - 1);
+    wss_send(conn, output, (int) strlen(output));
 }
 
 void wss_handle_http_handshake(struct wws_connection* conn) {
@@ -211,7 +222,6 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
         }
 
         pos += len;
-
     } while (strstr(header_buf, "\r\n\r\n") == NULL);
 
     header_buf[pos + 1] = 0;
@@ -223,7 +233,8 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
 
     headers_kv_t* connection = httpFindHeader(request.headers, request.num_headers, "Connection");
     if (connection == NULL || strcasecmp(connection->value, "Upgrade") == 0) {
-        log("Error reading HTTP request: Connection header not present or value invalid: %s\n", connection != NULL ? connection->value : "(null)");
+        log("Error reading HTTP request: Connection header not present or value invalid: %s\n",
+            connection != NULL ? connection->value : "(null)");
         wss_send_http_response(conn, 426, "Upgrade Required", "Upgrade: Websocket");
         conn->is_connected = false;
         return;
@@ -231,7 +242,8 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
 
     headers_kv_t* upgrade = httpFindHeader(request.headers, request.num_headers, "Upgrade");
     if (upgrade == NULL || strcasecmp(upgrade->value, "Websocket") == 0) {
-        log("Error reading HTTP request: Upgrade header not present or value invalid: %s\n", upgrade != NULL ? upgrade->value : "(null)");
+        log("Error reading HTTP request: Upgrade header not present or value invalid: %s\n",
+            upgrade != NULL ? upgrade->value : "(null)");
         wss_send_http_response(conn, 400, "Bad Request", NULL);
         conn->is_connected = false;
         return;
@@ -245,30 +257,33 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
         return;
     }
 
-    headers_kv_t* wsver = httpFindHeader(request.headers, request.num_headers, "Sec-WebSocket-Version");
+    /*headers_kv_t* wsver = httpFindHeader(request.headers, request.num_headers, "Sec-WebSocket-Version");
     if (wsver == NULL) {
         log("Error reading HTTP request: Sec-WebSocket-Version header not present or invalid value: %s\n", wsver != NULL ? wsver->value : "(null)");
         wss_send_http_response(conn, 400, "Bad Request", "Sec-WebSocket-Version: " WEBSOCKET_VERSION);
         conn->is_connected = false;
         return;
-    }
+    }*/
 
-    char ws_accept[64];
-    int ws_accept_len = snprintf(ws_accept, 64, "%s%s", "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", wskey->value); // magic number
+    logv("Session Key: %.*s\n", wskey->value_len - 1, wskey->value); // cut off the \r
+    char ws_accept[96];
+    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len - 1, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
+    logv("Concated Session Key: %s\n", ws_accept);
     uint8_t digest[20];
 
-    SHA1_CTX sha;
-    SHA1Init (&sha);
-    SHA1Update(&sha, (uint8_t*) ws_accept, ws_accept_len);
-    SHA1Final(digest, &sha);
+    SHA_CTX sha;
+    SHA1_Init(&sha);
+    SHA1_Update(&sha, (uint8_t *) ws_accept, strlen(ws_accept));
+    SHA1_Final(digest, &sha);
 
-    size_t _;
-    char* base64_str = base64_encode(digest, 20, &_);
+    char base64_str[64];
+    size_t base64_str_len = base64_encode(digest, 20, base64_str);
+    logv("Sec-WebSocket-Accept: (%d) %.*s\n", base64_str_len, base64_str_len, base64_str);
 
     char response_header[512];
-    sprintf(response_header, "Connection: Upgrade\r\nUpgrade: Websocket\r\nSec-WebSocket-Version: " WEBSOCKET_VERSION "\r\nSec-WebSocket-Accept: %s", base64_str);
-
-    free(base64_str);
+    sprintf(response_header,
+            "Connection: Upgrade\r\nUpgrade: Websocket\r\nSec-WebSocket-Version: " WEBSOCKET_VERSION
+            "\r\nSec-WebSocket-Accept: %.*s", (int) base64_str_len, base64_str);
 
     wss_send_http_response(conn, 101, "Switching Protocols", response_header);
     log("Connection successfully upgraded to websockets\n");
