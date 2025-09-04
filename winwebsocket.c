@@ -113,7 +113,12 @@ DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
             conn->port = remote_addr.sin_port;
             inet_ntop(AF_INET, &(remote_addr.sin_addr), conn->ip_str, INET_ADDRSTRLEN);
             log("Incoming connection from %s:%d\n", conn->ip_str, conn->port);
+
+            int i = 1;
+            setsockopt( client, IPPROTO_TCP, TCP_NODELAY, (void *)&i, sizeof(i));
+
             InterlockedIncrement(&connection_counter);
+
             conn->thread_handle = CreateThread(NULL, 0, wws_client_proc, conn, 0, NULL);
             if (conn->thread_handle == NULL) {
                 log("Failed to start client proc thread (%ld)\n", GetLastError());
