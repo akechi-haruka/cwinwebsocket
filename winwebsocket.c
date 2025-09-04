@@ -217,7 +217,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     httpParseRequest(header_buf, &request);
 
     headers_kv_t* connection = httpFindHeader(request.headers, request.num_headers, "Connection");
-    if (connection == NULL || strcasecmp(connection->value, "Upgrade") != 0) {
+    if (connection == NULL || strcasecmp(connection->value, "Upgrade") == 0) {
         log("Error reading HTTP request: Connection header not present or value invalid: %s\n", connection != NULL ? connection->value : "(null)");
         wss_send_http_response(conn, 426, "Upgrade Required", "Upgrade: Websocket");
         conn->is_connected = false;
@@ -225,7 +225,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     }
 
     headers_kv_t* upgrade = httpFindHeader(request.headers, request.num_headers, "Upgrade");
-    if (upgrade == NULL || strcasecmp(upgrade->value, "Websocket") != 0) {
+    if (upgrade == NULL || strcasecmp(upgrade->value, "Websocket") == 0) {
         log("Error reading HTTP request: Upgrade header not present or value invalid: %s\n", upgrade != NULL ? upgrade->value : "(null)");
         wss_send_http_response(conn, 400, "Bad Request", NULL);
         conn->is_connected = false;
