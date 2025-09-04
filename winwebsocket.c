@@ -114,9 +114,6 @@ DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
             inet_ntop(AF_INET, &(remote_addr.sin_addr), conn->ip_str, INET_ADDRSTRLEN);
             log("Incoming connection from %s:%d\n", conn->ip_str, conn->port);
 
-            int i = 1;
-            setsockopt( client, IPPROTO_TCP, TCP_NODELAY, (void *)&i, sizeof(i));
-
             InterlockedIncrement(&connection_counter);
 
             conn->thread_handle = CreateThread(NULL, 0, wws_client_proc, conn, 0, NULL);
@@ -149,8 +146,13 @@ DWORD __stdcall wws_client_proc(LPVOID ctx) {
         }
     }
 
-    log("Lost connection of %s:%d\n", conn->ip_str, conn->port);
+    log("Disconnecting %s:%d\n", conn->ip_str, conn->port);
+    WSAEVENT ev = WSACreateEvent();
+    WSAEventSelect(conn->conn_handle, &ev, FD_CLOSE);
+    shutdown(conn->conn_handle, SD_SEND);
+    WSAWaitForMultipleEvents(1, &ev, FALSE, INFINITE, FALSE);
     closesocket(conn->conn_handle);
+    log("Disconnected %s:%d\n", conn->ip_str, conn->port);
     InterlockedDecrement(&connection_counter);
     free(conn);
     return 0;
