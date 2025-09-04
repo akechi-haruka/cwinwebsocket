@@ -61,6 +61,16 @@ HRESULT wws_start(int port) {
         return HRESULT_FROM_WIN32(ret);
     }
 
+    struct sockaddr_in bind_addr = {0};
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = port;
+    ret = bind(server_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr));
+    if (ret == SOCKET_ERROR) {
+        log("bind failed with error: %ld\n", WSAGetLastError());
+        WSACleanup();
+        return HRESULT_FROM_WIN32(ret);
+    }
+
     ret = listen(server_socket, SOMAXCONN);
     if (ret == SOCKET_ERROR) {
         log("listen failed with error: %d\n", WSAGetLastError());
