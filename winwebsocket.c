@@ -24,6 +24,7 @@ static void (*cb_onmessage)(struct wws_connection*, const char*, size_t) = NULL;
 static void (*cb_log)(const char*, ...) = NULL;
 
 static bool is_running = false;
+static bool log_verbose = false;
 static SOCKET server_socket = INVALID_SOCKET;
 static HANDLE server_thread = INVALID_HANDLE_VALUE;
 static long volatile connection_counter = 0;
@@ -41,6 +42,7 @@ void wws_set_callbacks(
 }
 
 #define log(...) if (cb_log != NULL) { cb_log(__VA_ARGS__); }
+#define logv(...) if (log_verbose) { log(__VA_ARGS__); }
 
 HRESULT wws_start(int port) {
     if (is_running) {
@@ -149,7 +151,7 @@ DWORD __stdcall wws_client_proc(LPVOID ctx) {
     log("Disconnecting %s:%d\n", conn->ip_str, conn->port);
     WSAEVENT ev = WSACreateEvent();
     WSAEventSelect(conn->conn_handle, &ev, FD_CLOSE);
-    shutdown(conn->conn_handle, SD_SEND);
+    shutdown(conn->conn_handle, SD_BOTH);
     WSAWaitForMultipleEvents(1, &ev, FALSE, INFINITE, FALSE);
     closesocket(conn->conn_handle);
     log("Disconnected %s:%d\n", conn->ip_str, conn->port);
@@ -184,6 +186,7 @@ void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, con
     snprintf(output, 2048, "HTTP/1.1 %d %s\r\nConnection: close\r\n%s\r\n\r\n", http_code, http_message, extra_headers);
 
     log("HTTP Response: %d %s\n", http_code, http_message);
+    logv("Response content:\n%s", output);
 
     wss_send(conn, output, (int)strlen(output) - 1);
 }
@@ -212,6 +215,8 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     } while (strstr(header_buf, "\r\n\r\n") == NULL);
 
     header_buf[pos + 1] = 0;
+
+    logv("Received request:\n%s", header_buf);
 
     http_request_t request;
     httpParseRequest(header_buf, &request);
@@ -283,6 +288,10 @@ HRESULT wws_send(struct wws_connection* conn, const char* msg, size_t size) {
     log("THIS NEEDS IMPLEMENTATION!\n"); // TODO
     conn->is_connected = false;
     return E_FAIL;
+}
+
+void wws_set_verbose(bool verbose) {
+    log_verbose = verbose;
 }
 
 HRESULT wws_stop() {

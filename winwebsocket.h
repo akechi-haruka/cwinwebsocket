@@ -29,5 +29,6 @@ void wws_set_callbacks(
 );
 HRESULT wws_start(int port);
 bool wws_is_running();
+void wws_set_verbose(bool verbose);
 HRESULT wws_send(struct wws_connection* client, const char* msg, size_t size);
 HRESULT wws_stop();
