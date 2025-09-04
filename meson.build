@@ -11,12 +11,18 @@ add_project_arguments(
 lib_args = ['-DBUILDING_MESON_LIBRARY']
 
 inc = include_directories('.')
+cc = meson.get_compiler('c')
 
-cws_lib = shared_library('cwinwebsocket',
+ws2_32_lib = cc.find_library('ws2_32')
+
+cws_lib = static_library('cwinwebsocket',
         install : true,
         c_args : lib_args,
         name_prefix : '',
         include_directories : inc,
+        dependencies: [
+            ws2_32_lib
+        ],
         sources: [
             'lib/base64.c',
             'lib/base64.h',
