@@ -264,6 +264,7 @@ bool wws_is_running() {
 HRESULT wws_send(struct wws_connection* conn, const char* msg, size_t size) {
     log("THIS NEEDS IMPLEMENTATION!\n"); // TODO
     conn->is_connected = false;
+    return E_FAIL;
 }
 
 HRESULT wws_stop() {
