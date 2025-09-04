@@ -63,7 +63,8 @@ HRESULT wws_start(int port) {
 
     struct sockaddr_in bind_addr = {0};
     bind_addr.sin_family = AF_INET;
-    bind_addr.sin_port = port;
+    bind_addr.sin_port = htons(port);
+    bind_addr.sin_addr.S_un.S_addr = INADDR_ANY;
     ret = bind(server_socket, (struct sockaddr*)&bind_addr, sizeof(bind_addr));
     if (ret == SOCKET_ERROR) {
         log("bind failed with error: %ld\n", WSAGetLastError());
