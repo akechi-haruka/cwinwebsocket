@@ -10,10 +10,13 @@ add_project_arguments(
 
 lib_args = ['-DBUILDING_MESON_LIBRARY']
 
-shared_library('cwinwebsocket',
+inc = include_directories('.')
+
+cws_lib = shared_library('cwinwebsocket',
         install : true,
         c_args : lib_args,
         name_prefix : '',
+        include_directories : inc,
         sources: [
             'lib/base64.c',
             'lib/base64.h',
@@ -24,4 +27,9 @@ shared_library('cwinwebsocket',
             'winwebsocket.c',
             'winwebsocket.h',
         ]
+)
+
+cws_dep = declare_dependency(
+    link_with : cws_lib,
+    include_directories : inc,
 )
