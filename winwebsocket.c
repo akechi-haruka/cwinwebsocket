@@ -211,7 +211,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
 
     headers_kv_t* connection = httpFindHeader(request.headers, request.num_headers, "Connection");
     if (connection == NULL || strcasecmp(connection->value, "Upgrade") != 0) {
-        log("Error reading HTTP request: Connection header not present or value invalid\n");
+        log("Error reading HTTP request: Connection header not present or value invalid: %s\n", connection != NULL ? connection->value : "(null)");
         wss_send_http_response(conn, 426, "Upgrade Required", "Upgrade: Websocket");
         conn->is_connected = false;
         return;
@@ -219,7 +219,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
 
     headers_kv_t* upgrade = httpFindHeader(request.headers, request.num_headers, "Upgrade");
     if (upgrade == NULL || strcasecmp(upgrade->value, "Websocket") != 0) {
-        log("Error reading HTTP request: Upgrade header not present or value invalid\n");
+        log("Error reading HTTP request: Upgrade header not present or value invalid: %s\n", upgrade != NULL ? upgrade->value : "(null)");
         wss_send_http_response(conn, 400, "Bad Request", NULL);
         conn->is_connected = false;
         return;
@@ -235,7 +235,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
 
     headers_kv_t* wsver = httpFindHeader(request.headers, request.num_headers, "Sec-WebSocket-Version");
     if (wsver == NULL) {
-        log("Error reading HTTP request: Sec-WebSocket-Version header not present or invalid value\n");
+        log("Error reading HTTP request: Sec-WebSocket-Version header not present or invalid value: %s\n", wsver != NULL ? wsver->value : "(null)");
         wss_send_http_response(conn, 400, "Bad Request", "Sec-WebSocket-Version: " WEBSOCKET_VERSION);
         conn->is_connected = false;
         return;
