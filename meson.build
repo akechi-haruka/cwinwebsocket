@@ -8,10 +8,18 @@ add_project_arguments(
     language: 'c',
 )
 
+cc = meson.get_compiler('c')
+
+if cc.get_id() != 'msvc'
+    add_project_arguments(
+        '-Wno-unused',
+        language: 'c',
+    )
+endif
+
 lib_args = ['-DBUILDING_MESON_LIBRARY']
 
 inc = include_directories('.')
-cc = meson.get_compiler('c')
 
 ws2_32_lib = cc.find_library('ws2_32')
 
