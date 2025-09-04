@@ -18,9 +18,9 @@ static DWORD __stdcall wws_client_proc(LPVOID ctx);
 static void wss_handle_http_handshake(struct wws_connection* conn);
 static void wss_handle_ws_frame(struct wws_connection* conn);
 
-static void (*cb_onopen)(struct wws_connection) = NULL;
-static void (*cb_onclose)(struct wws_connection) = NULL;
-static void (*cb_onmessage)(struct wws_connection, const char*, size_t) = NULL;
+static void (*cb_onopen)(struct wws_connection*) = NULL;
+static void (*cb_onclose)(struct wws_connection*) = NULL;
+static void (*cb_onmessage)(struct wws_connection*, const char*, size_t) = NULL;
 static void (*cb_log)(const char*, ...) = NULL;
 
 static bool is_running = false;
@@ -29,9 +29,9 @@ static HANDLE server_thread = INVALID_HANDLE_VALUE;
 static long volatile connection_counter = 0;
 
 void wws_set_callbacks(
-    void (*onopen)(struct wws_connection conn),
-    void (*onclose)(struct wws_connection conn),
-    void (*onmessage)(struct wws_connection conn, const char* msg, size_t len),
+    void (*onopen)(struct wws_connection* conn),
+    void (*onclose)(struct wws_connection* conn),
+    void (*onmessage)(struct wws_connection* conn, const char* msg, size_t len),
     void (*log)(const char* msg, ...)
 ) {
     cb_onopen = onopen;
@@ -259,6 +259,11 @@ static void wss_handle_ws_frame(struct wws_connection* conn) {
 
 bool wws_is_running() {
     return is_running;
+}
+
+HRESULT wws_send(struct wws_connection* conn, const char* msg, size_t size) {
+    log("THIS NEEDS IMPLEMENTATION!\n"); // TODO
+    conn->is_connected = false;
 }
 
 HRESULT wws_stop() {

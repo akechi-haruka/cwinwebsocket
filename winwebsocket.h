@@ -22,11 +22,12 @@ struct wws_connection {
 };
 
 void wws_set_callbacks(
-    void (*onopen)(struct wws_connection conn),
-    void (*onclose)(struct wws_connection conn),
-    void (*onmessage)(struct wws_connection conn, const char* msg, size_t len),
+    void (*onopen)(struct wws_connection* conn),
+    void (*onclose)(struct wws_connection* conn),
+    void (*onmessage)(struct wws_connection* conn, const char* msg, size_t len),
     void (*log)(const char* msg, ...)
 );
 HRESULT wws_start(int port);
 bool wws_is_running();
+HRESULT wws_send(struct wws_connection* client, const char* msg, size_t size);
 HRESULT wws_stop();
