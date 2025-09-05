@@ -38,6 +38,8 @@ cws_lib = static_library('cwinwebsocket',
             'lib/http_parser.h',
             'lib/sha1.c',
             'lib/sha1.h',
+            'netutil.c',
+            'netutil.h',
             'winwebsocket.c',
             'winwebsocket.h',
         ]

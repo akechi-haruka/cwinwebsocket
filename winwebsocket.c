@@ -10,17 +10,19 @@
 #include "lib/base64.h"
 #include "lib/http_parser.h"
 #include "lib/sha1.h"
+#include "netutil.h"
 
 #define MAX_CONNECTIONS 16
 #define HEADER_BUF_MAX 2048
 
+#pragma region prototypes
 static DWORD __stdcall wws_proc(LPVOID ctx);
 
 static DWORD __stdcall wws_client_proc(LPVOID ctx);
 
-static void wss_handle_http_handshake(struct wws_connection* conn);
+static void wws_handle_http_handshake(struct wws_connection* conn);
 
-static char* wss_handle_ws_frame(struct wws_connection* conn, size_t* payload_len);
+static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_len);
 
 static void (*cb_onopen)(struct wws_connection*) = NULL;
 
@@ -29,12 +31,18 @@ static void (*cb_onclose)(struct wws_connection*) = NULL;
 static void (*cb_onmessage)(struct wws_connection*, const char*, size_t) = NULL;
 
 static void (*cb_log)(const char*, ...) = NULL;
+#pragma endregion
 
+#pragma region globals
 static bool is_running = false;
 static bool log_verbose = false;
 static SOCKET server_socket = INVALID_SOCKET;
 static HANDLE server_thread = INVALID_HANDLE_VALUE;
 static long volatile connection_counter = 0;
+
+#define log(...) if (cb_log != NULL) { cb_log(__VA_ARGS__); }
+#define logv(...) if (log_verbose) { log(__VA_ARGS__); }
+#pragma endregion
 
 void wws_set_callbacks(
     void (*onopen)(struct wws_connection* conn),
@@ -48,10 +56,7 @@ void wws_set_callbacks(
     cb_log = log;
 }
 
-#define log(...) if (cb_log != NULL) { cb_log(__VA_ARGS__); }
-#define logv(...) if (log_verbose) { log(__VA_ARGS__); }
-
-HRESULT wws_start(int port) {
+HRESULT wws_start(uint16_t port) {
     if (is_running) {
         return S_FALSE;
     }
@@ -97,11 +102,13 @@ HRESULT wws_start(int port) {
     return S_OK;
 }
 
-DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
+
+DWORD __stdcall wws_proc(LPVOID ctx) {
+    UNUSED(ctx); // suppress warning
     while (is_running) {
-        struct sockaddr_in remote_addr = {0};
-        int remote_addr_len = sizeof(remote_addr);
-        SOCKET client = accept(server_socket, (struct sockaddr *) &remote_addr, &remote_addr_len);
+        struct sockaddr_in remote_address = {0};
+        int remote_address_len = sizeof(remote_address);
+        SOCKET client = accept(server_socket, (struct sockaddr *) &remote_address, &remote_address_len);
         if (client == INVALID_SOCKET) {
             int error = WSAGetLastError();
             if (error == WSAEINTR) {
@@ -117,9 +124,9 @@ DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
             memset(conn, 0, sizeof(struct wws_connection));
             conn->conn_handle = client;
             conn->is_connected = true;
-            conn->ip = remote_addr.sin_addr.S_un.S_addr;
-            conn->port = remote_addr.sin_port;
-            inet_ntop(AF_INET, &(remote_addr.sin_addr), conn->ip_str, INET_ADDRSTRLEN);
+            conn->ip = remote_address.sin_addr.S_un.S_addr;
+            conn->port = ntohs(remote_address.sin_port);
+            inet_ntop(AF_INET, &(remote_address.sin_addr), conn->ip_str, INET_ADDRSTRLEN);
             log("Incoming connection from %s:%d\n", conn->ip_str, conn->port);
 
             InterlockedIncrement(&connection_counter);
@@ -141,13 +148,15 @@ DWORD __stdcall wws_proc([[maybe_unused]] LPVOID ctx) {
 
 DWORD __stdcall wws_client_proc(LPVOID ctx) {
     struct wws_connection* conn = ctx;
+    
+    InitializeCriticalSection(&conn->send_lock);
 
     while (is_running && conn->is_connected) {
         if (conn->mode == HTTP) {
-            wss_handle_http_handshake(conn);
+            wws_handle_http_handshake(conn);
         } else if (conn->mode == WS) {
             size_t size = 0;
-            char* payload = wss_handle_ws_frame(conn, &size);
+            char* payload = wws_handle_ws_frame(conn, &size);
             if (payload != NULL) {
                 if (cb_onmessage != NULL) {
                     cb_onmessage(conn, payload, size);
@@ -177,30 +186,13 @@ DWORD __stdcall wws_client_proc(LPVOID ctx) {
         cb_onclose(conn);
     }
 
+    DeleteCriticalSection(&conn->send_lock);
     InterlockedDecrement(&connection_counter);
     free(conn);
     return 0;
 }
 
-void wss_send(struct wws_connection* conn, const char* data, int len) {
-    assert(conn != NULL);
-    if (!conn->is_connected) {
-        return;
-    }
-
-    int pos = 0;
-    do {
-        int written = send(conn->conn_handle, data + pos, len - pos, 0);
-        if (written == SOCKET_ERROR) {
-            log("Socket write error: %ld\n", GetLastError());
-            conn->is_connected = false;
-        }
-
-        pos += written;
-    } while (pos < len);
-}
-
-void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, const char* http_message,
+void wws_send_http_response(struct wws_connection* conn, uint16_t http_code, const char* http_message,
                             const char* extra_headers) {
     assert(conn != NULL);
     if (!conn->is_connected) {
@@ -214,10 +206,10 @@ void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, con
     log("HTTP Response: %d %s\n", http_code, http_message);
     logv("Response content:\n%s", output);
 
-    wss_send(conn, output, (int) strlen(output));
+    send_fixed(conn->conn_handle, output, (int) strlen(output)); // failure doesn't matter since this always results in termination
 }
 
-void wss_handle_http_handshake(struct wws_connection* conn) {
+void wws_handle_http_handshake(struct wws_connection* conn) {
     assert(conn != NULL);
 
     char header_buf[HEADER_BUF_MAX];
@@ -233,7 +225,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
 
         if (pos + len > HEADER_BUF_MAX) {
             log("Error reading during handshake phase: Request too large\n");
-            wss_send_http_response(conn, 431, "Request Header Fields Too Large", NULL);
+            wws_send_http_response(conn, 431, "Request Header Fields Too Large", NULL);
             conn->is_connected = false;
             return;
         }
@@ -252,7 +244,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     if (connection == NULL || strcasecmp(connection->value, "Upgrade") == 0) {
         log("Error reading HTTP request: Connection header not present or value invalid: %s\n",
             connection != NULL ? connection->value : "(null)");
-        wss_send_http_response(conn, 426, "Upgrade Required", "Upgrade: Websocket");
+        wws_send_http_response(conn, 426, "Upgrade Required", "Upgrade: Websocket");
         conn->is_connected = false;
         return;
     }
@@ -261,7 +253,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     if (upgrade == NULL || strcasecmp(upgrade->value, "Websocket") == 0) {
         log("Error reading HTTP request: Upgrade header not present or value invalid: %s\n",
             upgrade != NULL ? upgrade->value : "(null)");
-        wss_send_http_response(conn, 400, "Bad Request", NULL);
+        wws_send_http_response(conn, 400, "Bad Request", NULL);
         conn->is_connected = false;
         return;
     }
@@ -269,7 +261,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     headers_kv_t* wskey = httpFindHeader(request.headers, request.num_headers, "Sec-WebSocket-Key");
     if (wskey == NULL) {
         log("Error reading HTTP request: Sec-WebSocket-Key header not present\n");
-        wss_send_http_response(conn, 400, "Bad Request", NULL);
+        wws_send_http_response(conn, 400, "Bad Request", NULL);
         conn->is_connected = false;
         return;
     }
@@ -277,7 +269,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     /*headers_kv_t* wsver = httpFindHeader(request.headers, request.num_headers, "Sec-WebSocket-Version");
     if (wsver == NULL) {
         log("Error reading HTTP request: Sec-WebSocket-Version header not present or invalid value: %s\n", wsver != NULL ? wsver->value : "(null)");
-        wss_send_http_response(conn, 400, "Bad Request", "Sec-WebSocket-Version: " WEBSOCKET_VERSION);
+        wws_send_http_response(conn, 400, "Bad Request", "Sec-WebSocket-Version: " WEBSOCKET_VERSION);
         conn->is_connected = false;
         return;
     }*/
@@ -302,7 +294,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
             "Connection: Upgrade\r\nUpgrade: Websocket\r\nSec-WebSocket-Version: " WEBSOCKET_VERSION
             "\r\nSec-WebSocket-Accept: %.*s", (int) base64_str_len, base64_str);
 
-    wss_send_http_response(conn, 101, "Switching Protocols", response_header);
+    wws_send_http_response(conn, 101, "Switching Protocols", response_header);
     log("Connection successfully upgraded to websockets\n");
     conn->mode = WS;
     if (cb_onopen != NULL) {
@@ -310,35 +302,7 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     }
 }
 
-static bool recv_fixed(SOCKET s, char* buf, size_t len) {
-    size_t pos = 0;
-    do {
-        int recvd = recv(s, buf + pos, len - pos, 0);
-
-        if (recvd <= 0) {
-            return false;
-        }
-
-        pos += recvd;
-    } while (pos < len);
-    return true;
-}
-
-static bool send_fixed(SOCKET s, const char* buf, size_t len) {
-    size_t pos = 0;
-    do {
-        int sent = send(s, buf + pos, len - pos, 0);
-
-        if (sent <= 0) {
-            return false;
-        }
-
-        pos += sent;
-    } while (pos < len);
-    return true;
-}
-
-static bool wss_send_frame(struct wws_connection* conn, enum wws_opcodes opcode, const char* payload, size_t len) {
+static bool wws_send_frame(struct wws_connection* conn, enum wws_opcodes opcode, const char* payload, size_t len) {
     assert(conn != NULL);
     assert(payload == NULL && len > 0);
     if (!conn->is_connected) {
@@ -380,10 +344,12 @@ static bool wss_send_frame(struct wws_connection* conn, enum wws_opcodes opcode,
     header[pos++] = 0;
     header[pos++] = 0;
 
+    EnterCriticalSection(&conn->send_lock);
     bool ret = send_fixed(conn->conn_handle, header, pos);
     if (ret && len > 0) {
         ret = send_fixed(conn->conn_handle, payload, len);
     }
+    LeaveCriticalSection(&conn->send_lock);
 
     if (!ret) {
         log("Error sending websocket frame: %d\n", WSAGetLastError());
@@ -394,7 +360,7 @@ static bool wss_send_frame(struct wws_connection* conn, enum wws_opcodes opcode,
 }
 
 // Must free the given payload
-static char* wss_handle_ws_frame(struct wws_connection* conn, size_t* payload_len) {
+static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_len) {
     assert(conn != NULL);
 
     bool fin = false;
@@ -495,10 +461,10 @@ static char* wss_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
             log("Client closing connection: no reason given\n");
         }
 
-        wss_send_frame(conn, CLOSE, payload, payload_total_size);
+        wws_send_frame(conn, CLOSE, payload, payload_total_size);
         goto end_without_payload;
     } else if (initial_opcode == PING) {
-        wss_send_frame(conn, PONG, NULL, 0);
+        wws_send_frame(conn, PONG, NULL, 0);
         goto end_without_payload;
     } else if (initial_opcode != TEXT) {
         log("Error while reading WS message: Unknown opcode %x\n", initial_opcode);
@@ -528,7 +494,7 @@ HRESULT wws_send(struct wws_connection* conn, const char* msg, size_t size) {
         return E_HANDLE;
     }
 
-    return wss_send_frame(conn, TEXT, msg, size) ? S_OK : E_FAIL;
+    return wws_send_frame(conn, TEXT, msg, size) ? S_OK : E_FAIL;
 }
 
 void wws_set_verbose(const bool verbose) {
