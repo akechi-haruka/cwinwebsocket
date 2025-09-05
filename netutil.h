@@ -9,7 +9,7 @@
  * @param len The number of bytes to read. The buffer must be at least that size.
  * @return true on success, false on read error (use WSAGetLastError).
  */
-static bool recv_fixed(SOCKET s, char* buf, size_t len);
+bool recv_fixed(SOCKET s, char* buf, size_t len);
 
 /**
  * Ensures that exactly len bytes are written to the given socket.
@@ -18,4 +18,4 @@ static bool recv_fixed(SOCKET s, char* buf, size_t len);
  * @param len The number of bytes to write. The buffer must be at least that size.
  * @return true on success, false on read error (use WSAGetLastError).
  */
-static bool send_fixed(SOCKET s, const char* buf, size_t len);
+bool send_fixed(SOCKET s, const char* buf, size_t len);
