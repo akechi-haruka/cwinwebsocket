@@ -11,6 +11,7 @@
 #include "lib/http_parser.h"
 #include "lib/sha1.h"
 #include "netutil.h"
+#include "util.h"
 
 #define MAX_CONNECTIONS 16
 #define HEADER_BUF_MAX 2048
@@ -241,7 +242,7 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
     httpParseRequest(header_buf, &request);
 
     headers_kv_t* connection = httpFindHeader(request.headers, request.num_headers, "Connection");
-    if (connection == NULL || strcasecmp(connection->value, "Upgrade") == 0) {
+    if (connection == NULL || stristr(connection->value, "Upgrade") == NULL) {
         log("Error reading HTTP request: Connection header not present or value invalid: %s\n",
             connection != NULL ? connection->value : "(null)");
         wws_send_http_response(conn, 426, "Upgrade Required", "Upgrade: Websocket");
@@ -274,9 +275,9 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
         return;
     }*/
 
-    logv("Session Key: %.*s\n", wskey->value_len - 1, wskey->value);
+    logv("Session Key: %.*s\n", wskey->value_len, wskey->value);
     char ws_accept[96];
-    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len - 1, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
+    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
     logv("Concatenated Session Key: %s\n", ws_accept);
 
     uint8_t digest[20];

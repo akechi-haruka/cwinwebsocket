@@ -118,7 +118,7 @@ static int parseValue(char *raw, char **current, headers_kv_t *headers,
 	*current = &raw[prev];
 
 	headers[idx].value = *current;
-	headers[idx].value_len = strlen(*current);
+	headers[idx].value_len = strlen(*current) - 1;
 
 	*current = &raw[offset + 1];
 
@@ -182,7 +182,10 @@ static int parseHeaders(int offset, char *req_raw, headers_kv_t *headers) {
 					prev_pos = parseValue(req_raw, &ptr, headers, prev_pos, offset, num_headers);
 					part = KEY;
 					num_headers++;
-				} else if (new_line_count >= 3) {
+				}
+				if (new_line_count >= 3) {
+					prev_pos = parseValue(req_raw, &ptr, headers, prev_pos, offset, num_headers);
+					num_headers++;
 					ptr+=2;
 					part = CONTENT;
 					headers[num_headers-1].value = ptr;
