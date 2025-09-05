@@ -1,9 +1,11 @@
 #include "winwebsocket.h"
 
+#include <assert.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <limits.h>
 
 #include "lib/base64.h"
 #include "lib/http_parser.h"
@@ -11,7 +13,6 @@
 
 #define MAX_CONNECTIONS 16
 #define HEADER_BUF_MAX 2048
-#define WEBSOCKET_VERSION "13"
 
 static DWORD __stdcall wws_proc(LPVOID ctx);
 
@@ -19,7 +20,7 @@ static DWORD __stdcall wws_client_proc(LPVOID ctx);
 
 static void wss_handle_http_handshake(struct wws_connection* conn);
 
-static void wss_handle_ws_frame(struct wws_connection* conn);
+static char* wss_handle_ws_frame(struct wws_connection* conn, size_t* payload_len);
 
 static void (*cb_onopen)(struct wws_connection*) = NULL;
 
@@ -145,7 +146,14 @@ DWORD __stdcall wws_client_proc(LPVOID ctx) {
         if (conn->mode == HTTP) {
             wss_handle_http_handshake(conn);
         } else if (conn->mode == WS) {
-            wss_handle_ws_frame(conn);
+            size_t size = 0;
+            char* payload = wss_handle_ws_frame(conn, &size);
+            if (payload != NULL) {
+                if (cb_onmessage != NULL) {
+                    cb_onmessage(conn, payload, size);
+                }
+                free(payload);
+            }
         } else {
             log("Connection is in unknown state: %d\n", conn->mode);
             break;
@@ -164,12 +172,18 @@ DWORD __stdcall wws_client_proc(LPVOID ctx) {
 
     closesocket(conn->conn_handle);
     log("Disconnected %s:%d\n", conn->ip_str, conn->port);
+
+    if (conn->mode == WS && cb_onclose != NULL) {
+        cb_onclose(conn);
+    }
+
     InterlockedDecrement(&connection_counter);
     free(conn);
     return 0;
 }
 
 void wss_send(struct wws_connection* conn, const char* data, int len) {
+    assert(conn != NULL);
     if (!conn->is_connected) {
         return;
     }
@@ -188,6 +202,7 @@ void wss_send(struct wws_connection* conn, const char* data, int len) {
 
 void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, const char* http_message,
                             const char* extra_headers) {
+    assert(conn != NULL);
     if (!conn->is_connected) {
         return;
     }
@@ -203,6 +218,8 @@ void wss_send_http_response(struct wws_connection* conn, uint16_t http_code, con
 }
 
 void wss_handle_http_handshake(struct wws_connection* conn) {
+    assert(conn != NULL);
+
     char header_buf[HEADER_BUF_MAX];
     int pos = 0;
 
@@ -265,10 +282,10 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
         return;
     }*/
 
-    logv("Session Key: %.*s\n", wskey->value_len - 1, wskey->value); // cut off the \r
+    logv("Session Key: %.*s\n", wskey->value_len, wskey->value);
     char ws_accept[96];
-    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len - 1, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
-    logv("Concated Session Key: %s\n", ws_accept);
+    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
+    logv("Concatenated Session Key: %s\n", ws_accept);
     uint8_t digest[20];
 
     SHA_CTX sha;
@@ -288,11 +305,217 @@ void wss_handle_http_handshake(struct wws_connection* conn) {
     wss_send_http_response(conn, 101, "Switching Protocols", response_header);
     log("Connection successfully upgraded to websockets\n");
     conn->mode = WS;
+    if (cb_onopen != NULL) {
+        cb_onopen(conn);
+    }
 }
 
-static void wss_handle_ws_frame(struct wws_connection* conn) {
-    log("THIS NEEDS IMPLEMENTATION!\n"); // TODO
-    conn->is_connected = false;
+static bool recv_fixed(SOCKET s, char* buf, size_t len) {
+    size_t pos = 0;
+    do {
+        int recvd = recv(s, buf + pos, len - pos, 0);
+
+        if (recvd <= 0) {
+            return false;
+        }
+
+        pos += recvd;
+    } while (pos < len);
+    return true;
+}
+
+static bool send_fixed(SOCKET s, const char* buf, size_t len) {
+    size_t pos = 0;
+    do {
+        int sent = send(s, buf + pos, len - pos, 0);
+
+        if (sent <= 0) {
+            return false;
+        }
+
+        pos += sent;
+    } while (pos < len);
+    return true;
+}
+
+static bool wss_send_frame(struct wws_connection* conn, enum wws_opcodes opcode, const char* payload, size_t len) {
+    assert(conn != NULL);
+    assert(payload == NULL && len > 0);
+    if (!conn->is_connected) {
+        return false;
+    }
+
+    // should we implement fragmentation?
+
+    uint8_t len8;
+    if (len > USHRT_MAX) {
+        len8 = 127;
+    } else if (len > 125) {
+        len8 = 126;
+    } else {
+        len8 = len;
+    }
+
+    char header[WS_HEADER_SIZE];
+    int pos = 0;
+    header[pos++] = 1 << 7 | opcode; // FIN and opcode
+    header[pos++] = 0 << 7 | len8; // MASK and len8
+    if (len8 == 126) {
+        header[pos++] = len >> 8; // len16
+        header[pos++] = len;
+    } else if (len8 == 127) {
+        header[pos++] = len >> 54; // len64
+        header[pos++] = len >> 46;
+        header[pos++] = len >> 38;
+        header[pos++] = len >> 30;
+        header[pos++] = len >> 24;
+        header[pos++] = len >> 16;
+        header[pos++] = len >> 8;
+        header[pos++] = len;
+    }
+
+    // mask key
+    header[pos++] = 0;
+    header[pos++] = 0;
+    header[pos++] = 0;
+    header[pos++] = 0;
+
+    bool ret = send_fixed(conn->conn_handle, header, pos);
+    if (ret && len > 0) {
+        ret = send_fixed(conn->conn_handle, payload, len);
+    }
+
+    if (!ret) {
+        log("Error sending websocket frame: %d\n", WSAGetLastError());
+        conn->is_connected = false;
+    }
+
+    return ret;
+}
+
+// Must free the given payload
+static char* wss_handle_ws_frame(struct wws_connection* conn, size_t* payload_len) {
+    assert(conn != NULL);
+
+    bool fin = false;
+    int16_t initial_opcode = -1;
+    uint8_t mask_key[4];
+    char* payload = NULL;
+    char* fragment = NULL;
+    size_t payload_total_size = 0;
+
+    do {
+        char header[WS_HEADER_SIZE];
+        if (!recv_fixed(conn->conn_handle, header, 2)) {
+            log("Disconnected while reading WS header: %lx\n", WSAGetLastError());
+            conn->is_connected = false;
+            goto end_without_payload;
+        }
+
+        fin = header[0] & 1;
+        uint16_t opcode = header[0] & 0xFE;
+        bool mask = header[1] & 1;
+        uint8_t len8 = header[1] & 0xFE;
+        uint64_t fragment_len = len8;
+
+        if (len8 == 126) {
+            char extended_size[2];
+            if (!recv_fixed(conn->conn_handle, extended_size, sizeof(extended_size))) {
+                log("Disconnected while reading WS header: %lx\n", WSAGetLastError());
+                conn->is_connected = false;
+                goto end_without_payload;
+            }
+            fragment_len = extended_size[0] << 8 | header[1];
+        } else if (len8 == 127) {
+            char extended_size[8];
+            if (!recv_fixed(conn->conn_handle, extended_size, sizeof(extended_size))) {
+                log("Disconnected while reading WS header: %lx\n", WSAGetLastError());
+                conn->is_connected = false;
+                goto end_without_payload;
+            }
+            fragment_len = (uint64_t)extended_size[0] << 56 | (uint64_t)extended_size[1] << 48 | (uint64_t)extended_size[2] << 40 | (uint64_t)extended_size[3] << 32 | extended_size[4] << 24 | extended_size[5] << 16 | extended_size[6] << 8 | extended_size[7];
+        }
+        if (mask) {
+            for (int i = 0; i < 4; i++) {
+                mask_key[i] = header[10 + i];
+            }
+        }
+
+        if (opcode != CONTINUE && initial_opcode == -1) {
+            initial_opcode = opcode;
+        } else if (opcode != CONTINUE) {
+            log("Error while reading WS header: Protocol violation - opcode\n");
+            conn->is_connected = false;
+            goto end_without_payload;
+        }
+
+        if (fragment_len + payload_total_size > MAX_WS_MESSAGE_SIZE) {
+            log("Error while reading WS header: Request too large\n");
+            conn->is_connected = false;
+            goto end_without_payload;
+        }
+
+        free(fragment);
+        fragment = malloc(fragment_len);
+        if (fragment == NULL) {
+            log("Error while reading WS header: out of memory\n");
+            conn->is_connected = false;
+            goto end_without_payload;
+        }
+
+        if (!recv_fixed(conn->conn_handle, fragment, fragment_len)) {
+            log("Disconnected while reading WS payload: %lx\n", WSAGetLastError());
+            conn->is_connected = false;
+            goto end_without_payload;
+        }
+
+        if (mask) {
+            for (size_t i = 0; i < fragment_len; i++) {
+                fragment[i] ^= mask_key[i % 4];
+            }
+        }
+
+        payload = realloc(payload, payload_total_size + fragment_len);
+        if (payload == NULL) {
+            log("Error while reading WS header: out of memory\n");
+            conn->is_connected = false;
+            goto end_without_payload;
+        }
+
+        memcpy(payload + payload_total_size, fragment, fragment_len);
+        payload_total_size += fragment_len;
+    } while (!fin);
+
+    logv("Received websocket packet with opcode %x\n", initial_opcode);
+
+    if (initial_opcode == CLOSE) {
+        if (payload_total_size >= 2) {
+            log("Client closing connection: %d / %.*s\n", payload[0] << 8 | payload[1], payload_total_size - 2, payload + 2);
+        } else {
+            log("Client closing connection: no reason given\n");
+        }
+
+        wss_send_frame(conn, CLOSE, payload, payload_total_size);
+        goto end_without_payload;
+    } else if (initial_opcode == PING) {
+        wss_send_frame(conn, PONG, NULL, 0);
+        goto end_without_payload;
+    } else if (initial_opcode != TEXT) {
+        log("Error while reading WS message: Unknown opcode %x\n", initial_opcode);
+    }
+
+    logv("Received websocket message (size = %ld):\n%.*s\n", payload_total_size, payload_total_size, payload);
+
+    *payload_len = payload_total_size;
+    goto end;
+
+end_without_payload:
+    free(payload);
+    payload = NULL;
+    *payload_len = 0;
+end:
+    free(fragment);
+    return payload;
 }
 
 bool wws_is_running() {
@@ -300,12 +523,15 @@ bool wws_is_running() {
 }
 
 HRESULT wws_send(struct wws_connection* conn, const char* msg, size_t size) {
-    log("THIS NEEDS IMPLEMENTATION!\n"); // TODO
-    conn->is_connected = false;
-    return E_FAIL;
+    assert(conn != NULL);
+    if (!conn->is_connected) {
+        return E_HANDLE;
+    }
+
+    return wss_send_frame(conn, TEXT, msg, size) ? S_OK : E_FAIL;
 }
 
-void wws_set_verbose(bool verbose) {
+void wws_set_verbose(const bool verbose) {
     log_verbose = verbose;
 }
 

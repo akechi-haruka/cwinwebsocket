@@ -1,5 +1,6 @@
 /**
- * Version 1.0 April 2021
+ * Version 1.0.1 2025-09
+ * Fixed \r being passed in values - Haruka
  *
  * Copyright (c) 2021, James Barford-Evans
  * All rights reserved.
@@ -114,8 +115,8 @@ static int parseKey(char *raw, char *current, headers_kv_t *headers, int offset,
 static int parseValue(char *raw, char **current, headers_kv_t *headers,
 		int prev, int offset, int idx) {
 
-	// replace \n with a null terminator
-	raw[offset] = '\0';
+	// replace \r with a null terminator
+	raw[offset - 1] = '\0';
 	*current = &raw[prev];
 
 	headers[idx].value = *current;

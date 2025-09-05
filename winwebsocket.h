@@ -5,9 +5,22 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#define WEBSOCKET_VERSION "13"
+#define WS_HEADER_SIZE 14
+#define MAX_WS_MESSAGE_SIZE 8192
+
 enum wws_connection_mode {
     HTTP = 0,
     WS = 1
+};
+
+enum wws_opcodes {
+    CONTINUE = 0,
+    TEXT = 1,
+    BINARY = 2,
+    CLOSE = 8,
+    PING = 9,
+    PONG = 10
 };
 
 struct wws_connection {
