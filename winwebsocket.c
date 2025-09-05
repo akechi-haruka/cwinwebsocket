@@ -274,12 +274,12 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
         return;
     }*/
 
-    logv("Session Key: %.*s\n", wskey->value_len, wskey->value);
+    logv("Session Key: %.*s\n", wskey->value_len - 1, wskey->value);
     char ws_accept[96];
-    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
+    snprintf(ws_accept, 96, "%.*s%s", wskey->value_len - 1, wskey->value, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number
     logv("Concatenated Session Key: %s\n", ws_accept);
-    uint8_t digest[20];
 
+    uint8_t digest[20];
     SHA_CTX sha;
     SHA1_Init(&sha);
     SHA1_Update(&sha, (uint8_t *) ws_accept, strlen(ws_accept));
@@ -304,10 +304,14 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
 
 static bool wws_send_frame(struct wws_connection* conn, enum wws_opcodes opcode, const char* payload, size_t len) {
     assert(conn != NULL);
-    assert(payload == NULL && len > 0);
+    if (len > 0) {
+        assert(payload != NULL && len > 0);
+    }
     if (!conn->is_connected) {
         return false;
     }
+
+    logv("Sending websocket message (opcode %x, size %d):\n%.*s\n", opcode, len, len, payload);
 
     // should we implement fragmentation?
 
@@ -338,12 +342,6 @@ static bool wws_send_frame(struct wws_connection* conn, enum wws_opcodes opcode,
         header[pos++] = len;
     }
 
-    // mask key
-    header[pos++] = 0;
-    header[pos++] = 0;
-    header[pos++] = 0;
-    header[pos++] = 0;
-
     EnterCriticalSection(&conn->send_lock);
     bool ret = send_fixed(conn->conn_handle, header, pos);
     if (ret && len > 0) {
@@ -365,12 +363,13 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
 
     bool fin = false;
     int16_t initial_opcode = -1;
-    uint8_t mask_key[4];
+    char mask_key[4];
     char* payload = NULL;
     char* fragment = NULL;
     size_t payload_total_size = 0;
 
     do {
+        // read control bytes
         char header[WS_HEADER_SIZE];
         if (!recv_fixed(conn->conn_handle, header, 2)) {
             log("Disconnected while reading WS header: %lx\n", WSAGetLastError());
@@ -378,12 +377,13 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
             goto end_without_payload;
         }
 
-        fin = header[0] & 1;
-        uint16_t opcode = header[0] & 0xFE;
-        bool mask = header[1] & 1;
-        uint8_t len8 = header[1] & 0xFE;
+        fin = header[0] & 0b10000000;
+        uint16_t opcode = header[0] & 0b00001111;
+        bool mask = header[1] & 0b10000000;
+        uint8_t len8 = header[1] & 0b01111111;
         uint64_t fragment_len = len8;
 
+        // read payload length
         if (len8 == 126) {
             char extended_size[2];
             if (!recv_fixed(conn->conn_handle, extended_size, sizeof(extended_size))) {
@@ -391,7 +391,7 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
                 conn->is_connected = false;
                 goto end_without_payload;
             }
-            fragment_len = extended_size[0] << 8 | header[1];
+            fragment_len = (uint8_t)extended_size[0] << 8 | (uint8_t)extended_size[1];
         } else if (len8 == 127) {
             char extended_size[8];
             if (!recv_fixed(conn->conn_handle, extended_size, sizeof(extended_size))) {
@@ -399,24 +399,29 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
                 conn->is_connected = false;
                 goto end_without_payload;
             }
-            fragment_len = (uint64_t)extended_size[0] << 56 | (uint64_t)extended_size[1] << 48 | (uint64_t)extended_size[2] << 40 | (uint64_t)extended_size[3] << 32 | extended_size[4] << 24 | extended_size[5] << 16 | extended_size[6] << 8 | extended_size[7];
+            fragment_len = (uint64_t)extended_size[0] << 56 | (uint64_t)extended_size[1] << 48 | (uint64_t)extended_size[2] << 40 | (uint64_t)extended_size[3] << 32 | (uint32_t)extended_size[4] << 24 | (uint32_t)extended_size[5] << 16 | (uint16_t)extended_size[6] << 8 | (uint8_t)extended_size[7];
         }
+
+        // read mask key
         if (mask) {
-            for (int i = 0; i < 4; i++) {
-                mask_key[i] = header[10 + i];
+            if (!recv_fixed(conn->conn_handle, mask_key, sizeof(mask_key))) {
+                log("Disconnected while reading WS header: %lx\n", WSAGetLastError());
+                conn->is_connected = false;
+                goto end_without_payload;
             }
         }
 
+        // handle fragmentation
         if (opcode != CONTINUE && initial_opcode == -1) {
             initial_opcode = opcode;
         } else if (opcode != CONTINUE) {
-            log("Error while reading WS header: Protocol violation - opcode\n");
+            log("Error while reading WS header: Protocol violation - got opcode %x while reading fragmented packet\n", opcode);
             conn->is_connected = false;
             goto end_without_payload;
         }
 
         if (fragment_len + payload_total_size > MAX_WS_MESSAGE_SIZE) {
-            log("Error while reading WS header: Request too large\n");
+            log("Error while reading WS header: Request too large (fin=%d, len8=%d, frame=%d, total=%d, max=%d)\n", fin, len8, fragment_len, payload_total_size, MAX_WS_MESSAGE_SIZE);
             conn->is_connected = false;
             goto end_without_payload;
         }
@@ -435,12 +440,14 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
             goto end_without_payload;
         }
 
+        // unmask payload
         if (mask) {
             for (size_t i = 0; i < fragment_len; i++) {
                 fragment[i] ^= mask_key[i % 4];
             }
         }
 
+        // merge fragmented payload
         payload = realloc(payload, payload_total_size + fragment_len);
         if (payload == NULL) {
             log("Error while reading WS header: out of memory\n");
@@ -454,7 +461,7 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
 
     logv("Received websocket packet with opcode %x\n", initial_opcode);
 
-    if (initial_opcode == CLOSE) {
+    if (initial_opcode == CLOSE) { // client close request
         if (payload_total_size >= 2) {
             log("Client closing connection: %d / %.*s\n", payload[0] << 8 | payload[1], payload_total_size - 2, payload + 2);
         } else {
@@ -462,12 +469,15 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
         }
 
         wws_send_frame(conn, CLOSE, payload, payload_total_size);
+        conn->is_connected = false;
         goto end_without_payload;
-    } else if (initial_opcode == PING) {
+    } else if (initial_opcode == PING) { // keep-alive check
         wws_send_frame(conn, PONG, NULL, 0);
         goto end_without_payload;
-    } else if (initial_opcode != TEXT) {
+    } else if (initial_opcode != TEXT) { // anything else (which includes BINARY)
         log("Error while reading WS message: Unknown opcode %x\n", initial_opcode);
+        conn->is_connected = false;
+        goto end_without_payload;
     }
 
     logv("Received websocket message (size = %ld):\n%.*s\n", payload_total_size, payload_total_size, payload);
