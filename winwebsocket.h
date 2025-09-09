@@ -78,7 +78,7 @@ void wws_set_callbacks(
 );
 
 /**
- * Starts the websocket server.
+ * Starts the websocket server (on a new thread).
  * @param port The network port to listen on.
  * @return success if the server was started or is already running, fail on any error.
  */
@@ -106,7 +106,7 @@ void wws_set_verbose(bool verbose);
 HRESULT wws_send(struct wws_connection* client, const char* msg, size_t size);
 
 /**
- *
+ * Stops the server. Blocks until the webserver is stopped.
  * @return always success.
  */
 HRESULT wws_stop();
