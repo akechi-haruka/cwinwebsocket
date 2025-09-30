@@ -1,6 +1,6 @@
 project('cwinwebsocket', 'c',
         version : '1.0.0',
-        default_options : ['warning_level=3', 'c_std=c2x', 'werror=true'])
+        default_options : ['warning_level=3', 'c_std=c18', 'werror=true'])
 
 add_project_arguments(
     '-DWIN32_LEAN_AND_MEAN',
