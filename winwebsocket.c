@@ -378,10 +378,10 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
             goto end_without_payload;
         }
 
-        fin = header[0] & 0b10000000;
-        uint16_t opcode = header[0] & 0b00001111;
-        bool mask = header[1] & 0b10000000;
-        uint8_t len8 = header[1] & 0b01111111;
+        fin = header[0] & 0x80;
+        uint16_t opcode = header[0] & 0x0F;
+        bool mask = header[1] & 0x80;
+        uint8_t len8 = header[1] & 0x7F;
         uint64_t fragment_len = len8;
 
         // read payload length
@@ -495,7 +495,7 @@ end:
     return payload;
 }
 
-bool wws_is_running() {
+bool wws_is_running(void) {
     return is_running;
 }
 
@@ -512,7 +512,7 @@ void wws_set_verbose(const bool verbose) {
     log_verbose = verbose;
 }
 
-HRESULT wws_stop() {
+HRESULT wws_stop(void) {
     if (!is_running) {
         return S_FALSE;
     }

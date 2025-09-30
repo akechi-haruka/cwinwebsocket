@@ -89,7 +89,7 @@ HRESULT wws_start(uint16_t port);
  * Checks if the websocket server is running.
  * @return true if the server is running, false if not.
  */
-bool wws_is_running();
+bool wws_is_running(void);
 
 /**
  * Makes verbose messages being sent to the log callback (protocol details, handshake, sent/received payloads, etc.)
@@ -110,4 +110,4 @@ HRESULT wws_send(struct wws_connection* client, const char* msg, size_t size);
  * Stops the server. Blocks until the webserver is stopped.
  * @return always success.
  */
-HRESULT wws_stop();
+HRESULT wws_stop(void);
