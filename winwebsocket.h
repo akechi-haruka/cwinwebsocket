@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <stdbool.h>
 
 #define WEBSOCKET_VERSION "13"
 #define WS_HEADER_SIZE 14

@@ -104,7 +104,7 @@ static int parseKey(char *raw, char *current, headers_kv_t *headers, int offset,
 	// replace : with a null terminator
 	raw[offset] = '\0';
 	headers[idx].key = current;
-	headers[idx].key_len = strlen(current);
+	headers[idx].key_len = (int)strlen(current);
 
 	// move past : and the space after
 	return offset + 2;
@@ -118,7 +118,7 @@ static int parseValue(char *raw, char **current, headers_kv_t *headers,
 	*current = &raw[prev];
 
 	headers[idx].value = *current;
-	headers[idx].value_len = strlen(*current) - 1;
+	headers[idx].value_len = (int)strlen(*current) - 1;
 
 	*current = &raw[offset + 1];
 
