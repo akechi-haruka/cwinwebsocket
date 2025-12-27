@@ -15,6 +15,11 @@ if cc.get_id() != 'msvc'
         '-Wno-unused',
         language: 'c',
     )
+else
+    add_project_arguments(
+        '/wd5105', # sdk bug
+        language: 'c',
+    )
 endif
 
 lib_args = ['-DBUILDING_MESON_LIBRARY']
