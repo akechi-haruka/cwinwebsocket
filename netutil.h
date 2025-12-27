@@ -1,6 +1,7 @@
 #pragma once
 
 #include <winsock2.h>
+#include <stdbool.h>
 
 /**
  * Ensures that exactly len bytes are read from the given socket.

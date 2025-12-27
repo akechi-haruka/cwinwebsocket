@@ -60,4 +60,9 @@ void httpParseResponse(char *res_raw, http_response_t *res);
 headers_kv_t *httpFindHeader(headers_kv_t *headers, int num_headers, char *key);
 char *httpGetResponseBody(http_response_t *res);
 
+#ifdef _MSC_VER
+#define strncasecmp _strnicmp
+#define strcasecmp _stricmp
+#endif
+
 #endif

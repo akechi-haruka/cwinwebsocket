@@ -283,7 +283,7 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
     uint8_t digest[20];
     SHA_CTX sha;
     SHA1_Init(&sha);
-    SHA1_Update(&sha, (uint8_t *) ws_accept, strlen(ws_accept));
+    SHA1_Update(&sha, (uint8_t *) ws_accept, (uint32_t)strlen(ws_accept));
     SHA1_Final(digest, &sha);
 
     char base64_str[64];
@@ -291,7 +291,7 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
     logv("Sec-WebSocket-Accept: (%d) %.*s\n", base64_str_len, base64_str_len, base64_str);
 
     char response_header[512];
-    sprintf(response_header,
+    sprintf_s(response_header, 512,
             "Connection: Upgrade\r\nUpgrade: Websocket\r\nSec-WebSocket-Version: " WEBSOCKET_VERSION
             "\r\nSec-WebSocket-Accept: %.*s", (int) base64_str_len, base64_str);
 
@@ -303,7 +303,7 @@ void wws_handle_http_handshake(struct wws_connection* conn) {
     }
 }
 
-static bool wws_send_frame(struct wws_connection* conn, enum wws_opcodes opcode, const char* payload, size_t len) {
+static bool wws_send_frame(struct wws_connection* conn, enum wws_opcodes opcode, const char* payload, uint64_t len) {
     assert(conn != NULL);
     if (len > 0) {
         assert(payload != NULL && len > 0);
@@ -322,31 +322,31 @@ static bool wws_send_frame(struct wws_connection* conn, enum wws_opcodes opcode,
     } else if (len > 125) {
         len8 = 126;
     } else {
-        len8 = len;
+        len8 = (uint8_t)len;
     }
 
     char header[WS_HEADER_SIZE];
     int pos = 0;
-    header[pos++] = 1 << 7 | opcode; // FIN and opcode
+    header[pos++] = 1 << 7 | (uint8_t)opcode; // FIN and opcode
     header[pos++] = 0 << 7 | len8; // MASK and len8
     if (len8 == 126) {
-        header[pos++] = len >> 8; // len16
-        header[pos++] = len;
+        header[pos++] = (uint8_t)(len >> 8); // len16
+        header[pos++] = (uint8_t)len;
     } else if (len8 == 127) {
-        header[pos++] = len >> 54; // len64
-        header[pos++] = len >> 46;
-        header[pos++] = len >> 38;
-        header[pos++] = len >> 30;
-        header[pos++] = len >> 24;
-        header[pos++] = len >> 16;
-        header[pos++] = len >> 8;
-        header[pos++] = len;
+        header[pos++] = (uint8_t)(len >> 54); // len64
+        header[pos++] = (uint8_t)(len >> 46);
+        header[pos++] = (uint8_t)(len >> 38);
+        header[pos++] = (uint8_t)(len >> 30);
+        header[pos++] = (uint8_t)(len >> 24);
+        header[pos++] = (uint8_t)(len >> 16);
+        header[pos++] = (uint8_t)(len >> 8);
+        header[pos++] = (uint8_t)len;
     }
 
     EnterCriticalSection(&conn->send_lock);
     bool ret = send_fixed(conn->conn_handle, header, pos);
     if (ret && len > 0) {
-        ret = send_fixed(conn->conn_handle, payload, len);
+        ret = send_fixed(conn->conn_handle, payload, (size_t)len);
     }
     LeaveCriticalSection(&conn->send_lock);
 
@@ -367,7 +367,7 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
     char mask_key[4];
     char* payload = NULL;
     char* fragment = NULL;
-    size_t payload_total_size = 0;
+    uint64_t payload_total_size = 0;
 
     do {
         // read control bytes
@@ -378,10 +378,10 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
             goto end_without_payload;
         }
 
-        fin = header[0] & 0b10000000;
-        uint16_t opcode = header[0] & 0b00001111;
-        bool mask = header[1] & 0b10000000;
-        uint8_t len8 = header[1] & 0b01111111;
+        fin = header[0] & 0x80;
+        uint16_t opcode = header[0] & 0x0F;
+        bool mask = header[1] & 0x80;
+        uint8_t len8 = header[1] & 0x7F;
         uint64_t fragment_len = len8;
 
         // read payload length
@@ -428,14 +428,14 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
         }
 
         free(fragment);
-        fragment = malloc(fragment_len);
+        fragment = malloc((size_t)fragment_len);
         if (fragment == NULL) {
             log("Error while reading WS header: out of memory\n");
             conn->is_connected = false;
             goto end_without_payload;
         }
 
-        if (!recv_fixed(conn->conn_handle, fragment, fragment_len)) {
+        if (!recv_fixed(conn->conn_handle, fragment, (size_t)fragment_len)) {
             log("Disconnected while reading WS payload: %lx\n", WSAGetLastError());
             conn->is_connected = false;
             goto end_without_payload;
@@ -449,14 +449,14 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
         }
 
         // merge fragmented payload
-        payload = realloc(payload, payload_total_size + fragment_len);
+        payload = realloc(payload, (size_t)(payload_total_size + fragment_len));
         if (payload == NULL) {
             log("Error while reading WS header: out of memory\n");
             conn->is_connected = false;
             goto end_without_payload;
         }
 
-        memcpy(payload + payload_total_size, fragment, fragment_len);
+        memcpy(payload + payload_total_size, fragment, (size_t)fragment_len);
         payload_total_size += fragment_len;
     } while (!fin);
 
@@ -483,7 +483,7 @@ static char* wws_handle_ws_frame(struct wws_connection* conn, size_t* payload_le
 
     logv("Received websocket message (size = %ld):\n%.*s\n", payload_total_size, payload_total_size, payload);
 
-    *payload_len = payload_total_size;
+    *payload_len = (size_t)payload_total_size;
     goto end;
 
 end_without_payload:
@@ -495,7 +495,7 @@ end:
     return payload;
 }
 
-bool wws_is_running() {
+bool wws_is_running(void) {
     return is_running;
 }
 
@@ -512,7 +512,7 @@ void wws_set_verbose(const bool verbose) {
     log_verbose = verbose;
 }
 
-HRESULT wws_stop() {
+HRESULT wws_stop(void) {
     if (!is_running) {
         return S_FALSE;
     }
