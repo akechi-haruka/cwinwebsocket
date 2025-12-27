@@ -1,4 +1,5 @@
 #include <winsock2.h>
+#include <stdint.h>
 
 #include "netutil.h"
 
