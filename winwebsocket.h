@@ -95,7 +95,7 @@ bool wws_is_running(void);
  * Makes verbose messages being sent to the log callback (protocol details, handshake, sent/received payloads, etc.)
  * @param verbose true for verbose logs, false otherwise.
  */
-void wws_set_verbose(bool verbose);
+void wws_set_verbose(const bool verbose);
 
 /**
  * Sends a text message to a given connection. This is thread safe.
